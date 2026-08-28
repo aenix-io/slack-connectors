@@ -1,0 +1,76 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # The store tests start a real PostgreSQL through testcontainers, which
+      # needs the Docker socket the runner already provides.
+      - name: Test
+        run: go test ./... -race -count=1
+
+      - name: Vet
+        run: go vet ./...
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # Pinned rather than "latest" on the v6 action: that combination
+      # installed a golangci-lint built with Go 1.24, which refuses to load a
+      # config targeting the Go version in go.mod and failed before it linted
+      # anything. The version here is the one the .golangci.yaml schema
+      # expects and the one used locally.
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version: v2.12.2
+
+  chart:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: azure/setup-helm@v4
+
+      - name: Lint chart
+        run: helm lint deploy/helm
+
+      # The webhook paths are the service's only public surface. A path that
+      # stops being exposed, or one that appears without meaning to, is worth
+      # failing a build over.
+      - name: Check the exposed ingress paths
+        run: |
+          rendered=$(helm template test deploy/helm)
+          paths=$(echo "$rendered" | grep -E '^ +- path:' | awk '{print $3}' | sort)
+          expected=$(printf '/webhook/graph\n/webhook/slack\n')
+          if [ "$paths" != "$expected" ]; then
+            echo "unexpected ingress paths:"
+            echo "$paths"
+            exit 1
+          fi
+          exact=$(echo "$rendered" | grep -c 'pathType: Exact')
+          if [ "$exact" != "2" ]; then
+            echo "expected exactly 2 Exact paths, found $exact"
+            exit 1
+          fi

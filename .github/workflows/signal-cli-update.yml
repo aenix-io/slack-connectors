@@ -1,0 +1,73 @@
+# The signal-cli client expires roughly three months after its release, and
+# the Signal server then refuses it. This proposes the bump; it never applies
+# one, because rolling the sidecar restarts a customer's bridge.
+#
+# It is not the only guard. A scheduled workflow that quietly stops running —
+# billing, a disabled Actions setting, a renamed default branch — looks
+# exactly like one with nothing to do, so the alert on
+# bridge_signal_client_release_timestamp_seconds counts the same clock down
+# independently.
+name: signal-cli update check
+
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read the pinned version
+        id: current
+        run: |
+          version=$(grep -A2 '^signalCli:' deploy/helm-signal/values.yaml \
+            | grep 'tag:' | sed 's/.*"\(.*\)".*/\1/')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Ask GitHub for the latest release
+        id: latest
+        run: |
+          release=$(curl -fsSL https://api.github.com/repos/AsamK/signal-cli/releases/latest)
+          echo "version=$(echo "$release" | jq -r .tag_name | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+          echo "released_at=$(echo "$release" | jq -r .published_at)" >> "$GITHUB_OUTPUT"
+
+      - name: Update the chart
+        if: steps.current.outputs.version != steps.latest.outputs.version
+        run: |
+          sed -i \
+            -e 's|tag: "${{ steps.current.outputs.version }}"|tag: "${{ steps.latest.outputs.version }}"|' \
+            -e 's|releasedAt: ".*"|releasedAt: "${{ steps.latest.outputs.released_at }}"|' \
+            deploy/helm-signal/values.yaml
+
+      - name: Open a pull request
+        if: steps.current.outputs.version != steps.latest.outputs.version
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: chore/signal-cli-${{ steps.latest.outputs.version }}
+          title: "chore(deploy): signal-cli ${{ steps.latest.outputs.version }}"
+          signoff: true
+          draft: true
+          body: |
+            signal-cli ${{ steps.latest.outputs.version }} was released on
+            ${{ steps.latest.outputs.released_at }}; the chart pins
+            ${{ steps.current.outputs.version }}.
+
+            Clients expire about three months after release, after which the
+            Signal server refuses them and the bridge goes silent with no
+            warning from the platform.
+
+            Rolling this restarts the bridge. Messages sent during the restart
+            wait on the Signal server — the daemon runs with
+            `--receive-mode=manual` — so the cost is delay, not loss.
+          commit-message: |
+            chore(deploy): signal-cli ${{ steps.latest.outputs.version }}
+
+            Clients expire about three months after release and the server
+            then refuses them.

@@ -1,0 +1,17 @@
+{{- if .Values.monitoring.enabled }}
+# /metrics is deliberately not exposed through the Ingress, so this scrape is
+# the only way these numbers are collected. With monitoring disabled none of
+# them exist anywhere, including the client-expiry clock the alerts count down.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMServiceScrape
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.scrapeInterval }}
+{{- end }}

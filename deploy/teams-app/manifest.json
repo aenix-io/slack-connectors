@@ -1,0 +1,47 @@
+{
+  "$schema": "https://developer.microsoft.com/en-us/json-schemas/teams/v1.17/MicrosoftTeams.schema.json",
+  "manifestVersion": "1.17",
+  "version": "0.1.0",
+  "id": "bb722207-7b0d-4247-bb47-c90e866b75b0",
+  "developer": {
+    "name": "Aenix",
+    "websiteUrl": "https://aenix.io",
+    "privacyUrl": "https://aenix.io/privacy",
+    "termsOfUseUrl": "https://aenix.io/terms"
+  },
+  "name": {
+    "short": "Teams–Slack Bridge",
+    "full": "Aenix Teams–Slack Bridge"
+  },
+  "description": {
+    "short": "Mirrors this team's selected channels into Slack.",
+    "full": "Mirrors messages of selected channels of the team this app is installed into a paired Slack channel, threaded and attributed. Access is scoped by resource-specific consent to this team only; no tenant-wide permissions are requested."
+  },
+  "icons": {
+    "color": "color.png",
+    "outline": "outline.png"
+  },
+  "accentColor": "#3B5CAD",
+  "bots": [
+    {
+      "botId": "${BOT_APP_ID}",
+      "scopes": ["team"],
+      "isNotificationOnly": true,
+      "supportsFiles": false
+    }
+  ],
+  "webApplicationInfo": {
+    "id": "${AZURE_CLIENT_ID}",
+    "resource": "https://RscBasedStoreApp"
+  },
+  "authorization": {
+    "permissions": {
+      "resourceSpecific": [
+        {
+          "name": "ChannelMessage.Read.Group",
+          "type": "Application"
+        }
+      ]
+    }
+  }
+}

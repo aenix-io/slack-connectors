@@ -1,0 +1,16 @@
+# This volume is the account. Losing it means registering the number again,
+# which shows every participant a changed safety number — the warning that
+# reads as a compromise to exactly the kind of customer who chose Signal.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.persistence.size }}
+  {{- with .Values.persistence.storageClass }}
+  storageClassName: {{ . }}
+  {{- end }}

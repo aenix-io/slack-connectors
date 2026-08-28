@@ -1,0 +1,132 @@
+{{- if gt (int .Values.replicaCount) 1 }}
+{{- fail "replicaCount must be 1: signal-cli takes a file lock on its data directory and a second instance cannot start" }}
+{{- end }}
+{{- if not .Values.signalCli.account }}
+{{- fail "signalCli.account is required: it is the phone number this bridge runs as" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    # Recreate, not RollingUpdate: two signal-cli processes cannot share the
+    # data directory, and the second would fail to start while the first is
+    # still terminating.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        fsGroup: 65532
+      containers:
+        # signal-cli holds the account and speaks the Signal protocol. Its
+        # JSON-RPC socket is unauthenticated and grants full control of the
+        # number, so it is a unix socket in a shared volume and never a port.
+        - name: signal-cli
+          image: "{{ .Values.signalCli.repository }}:{{ .Values.signalCli.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --config=/var/lib/signal-cli
+            - -a={{ .Values.signalCli.account }}
+            - daemon
+            - --socket=/run/signal/socket
+            # Nothing is drained from the Signal server until the bridge
+            # subscribes. That is what makes a restart safe: messages sent
+            # while it is down wait on the server instead of being
+            # acknowledged into a socket nobody is reading.
+            - --receive-mode=manual
+            - --no-receive-stdout
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/signal-cli
+            - name: socket
+              mountPath: /run/signal
+            - name: tmp
+              mountPath: /tmp
+          resources:
+{{ toYaml .Values.resources.signalCli | indent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+
+        - name: bridge
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: CONFIG_PATH
+              value: /etc/bridge/config.yaml
+            - name: SIGNAL_SOCKET
+              value: /run/signal/socket
+            - name: SIGNAL_ACCOUNT
+              value: {{ .Values.signalCli.account | quote }}
+            # Where the sidecar writes received files, so they can be removed
+            # once transferred. signal-cli never removes them, and the volume
+            # they would fill also holds the account's identity keys.
+            - name: SIGNAL_ATTACHMENTS_DIR
+              value: /var/lib/signal-cli/attachments
+            - name: SIGNAL_CLI_RELEASED_AT
+              value: {{ .Values.signalCli.releasedAt | quote }}
+          envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecret }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/bridge
+              readOnly: true
+            - name: socket
+              mountPath: /run/signal
+            - name: data
+              mountPath: /var/lib/signal-cli
+          # Liveness deliberately checks nothing external: a database or
+          # sidecar outage is a reason to stop taking traffic, not a reason to
+          # restart into the same outage.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+          # Readiness reflects whether this pod can carry a message at all: a
+          # bridge whose socket died is deaf, and a deaf pod reporting Ready
+          # is how an outage stays invisible.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+{{ toYaml .Values.resources.bridge | indent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-config
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Release.Name }}-data
+        - name: socket
+          emptyDir: {}
+        # signal-cli unpacks its native library at startup and needs /tmp to
+        # be executable.
+        - name: tmp
+          emptyDir:
+            medium: Memory

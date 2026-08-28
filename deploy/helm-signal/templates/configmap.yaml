@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+data:
+  config.yaml: |
+    pairs:
+{{ toYaml .Values.pairs | indent 6 }}
+    {{- with .Values.users }}
+    users:
+{{ toYaml . | indent 6 }}
+    {{- end }}

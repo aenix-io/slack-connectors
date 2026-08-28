@@ -1,0 +1,6 @@
+apiVersion: v2
+name: teams-slack-bridge
+description: Mirrors messages between a Microsoft Teams channel and a Slack channel
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  labels:
+    app: {{ .Release.Name }}
+spec:
+  # The webhook endpoints must be publicly reachable BEFORE readiness can pass:
+  # /readyz gates on a live Graph subscription, and that subscription is only
+  # created once Graph's validation POST to /webhook/graph gets a 200. Without
+  # this, an unready pod is absent from the endpoints, the validation gets a
+  # 503/404, the subscription is never created, and readiness never flips — a
+  # bootstrap deadlock. Publishing the address regardless of readiness breaks it.
+  publishNotReadyAddresses: true
+  selector:
+    app: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

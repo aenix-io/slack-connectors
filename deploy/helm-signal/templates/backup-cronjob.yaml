@@ -1,0 +1,95 @@
+{{- if .Values.backup.enabled }}
+{{- if not .Values.backup.ageRecipient }}
+{{- fail "backup.ageRecipient is required: the archive is the account, and it must be encrypted before it leaves the pod" }}
+{{- end }}
+# The weekly consistent dump. A snapshot of a running signal-cli is a copy of
+# an unquiesced SQLite database, which usually recovers and is not something to
+# stake an account on — so this stops the pod, archives, and starts it again.
+#
+# The minute of downtime is free: with --receive-mode=manual nothing is drained
+# from the Signal server while the bridge is down, so messages sent during the
+# window arrive afterwards rather than being lost.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-backup
+spec:
+  schedule: {{ .Values.backup.schedule | quote }}
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: Never
+          serviceAccountName: {{ .Release.Name }}-backup
+          containers:
+            - name: backup
+              image: {{ .Values.backup.image }}
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -eu
+                  apk add --no-cache age aws-cli kubectl >/dev/null
+
+                  # Leaving the bridge scaled to zero is worse than skipping a
+                  # backup, so the scale-up runs whatever happens next.
+                  trap 'kubectl scale deploy/{{ .Release.Name }} --replicas=1' EXIT
+                  kubectl scale deploy/{{ .Release.Name }} --replicas=0
+                  kubectl rollout status deploy/{{ .Release.Name }} --timeout=5m || true
+
+                  stamp="$(date -u +%Y-%m-%dT%H-%M-%SZ)"
+                  tar -C /var/lib -cz signal-cli \
+                    | age -r "$AGE_RECIPIENT" \
+                    | aws s3 cp - "$DESTINATION/{{ .Release.Name }}/$stamp.tar.gz.age"
+              env:
+                - name: AGE_RECIPIENT
+                  value: {{ .Values.backup.ageRecipient | quote }}
+                - name: DESTINATION
+                  value: {{ .Values.backup.destination | quote }}
+              envFrom:
+                # Credentials with PutObject only: a compromised pod must not
+                # be able to erase the history that would let us recover from
+                # it.
+                - secretRef:
+                    name: {{ .Values.backup.existingSecret }}
+              volumeMounts:
+                - name: data
+                  mountPath: /var/lib/signal-cli
+                  readOnly: true
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: {{ .Release.Name }}-data
+                readOnly: true
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-backup
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-backup
+rules:
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale"]
+    resourceNames: [{{ .Release.Name | quote }}]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["apps"]
+    resources: ["deployments"]
+    verbs: ["list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-backup
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Release.Name }}-backup
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Release.Name }}-backup
+{{- end }}

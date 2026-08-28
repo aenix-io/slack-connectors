@@ -1,0 +1,20 @@
+version: "2"
+linters:
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - bodyclose
+    - errorlint
+    - gosec
+  settings:
+    gosec:
+      excludes:
+        - G401 # SHA-1 is mandated by the Graph OAEP contract
+        - G505
+formatters:
+  enable:
+    - gofmt
+    - goimports

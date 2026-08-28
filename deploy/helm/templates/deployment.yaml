@@ -1,0 +1,89 @@
+{{- if gt (int .Values.replicaCount) 1 }}
+{{- fail "replicaCount must be 1: two subscription managers would create duplicate Graph subscriptions and double every message into the customer's channel" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  strategy:
+    # Recreate, not RollingUpdate: two concurrent subscription managers
+    # would create duplicate Graph subscriptions and double every message.
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Release.Name }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum }}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+      containers:
+        - name: bridge
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: CONFIG_PATH
+              value: /etc/bridge/config.yaml
+            - name: PUBLIC_WEBHOOK_URL
+              value: {{ .Values.publicWebhookURL | quote }}
+            - name: GRAPH_ENCRYPTION_KEY_PATH
+              value: /etc/bridge/secrets/graph-encryption.pem
+          envFrom:
+            - secretRef:
+                name: {{ .Values.existingSecret }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/bridge
+              readOnly: true
+            - name: secrets
+              mountPath: /etc/bridge/secrets
+              readOnly: true
+          # Liveness deliberately checks nothing external: a database or Graph
+          # outage is a reason to stop taking traffic, not a reason to restart
+          # a pod that would come back to the same outage.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+          # Readiness reflects whether this pod can actually carry a message:
+          # the database is reachable and every pair has a live Graph
+          # subscription. Without the second check a pod that had gone deaf
+          # stayed Ready for as long as it ran.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            # The first sweep and the subscription creation both run after the
+            # listener binds, so readiness is legitimately false for a moment
+            # at startup.
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-config
+        - name: secrets
+          secret:
+            secretName: {{ .Values.existingSecret }}
+            items:
+              - key: graph-encryption.pem
+                path: graph-encryption.pem

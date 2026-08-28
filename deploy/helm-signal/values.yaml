@@ -1,0 +1,97 @@
+image:
+  repository: ghcr.io/aenix-io/slack-connectors/signal-slack
+  # Pin this to an immutable tag for anything but a throwaway install. An
+  # unpinned deployment cannot tell you what it actually ran.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+signalCli:
+  # The official packaging image. Pinned by digest because this is the
+  # component that talks to Signal with the account's keys.
+  repository: registry.gitlab.com/packaging/signal-cli/signal-cli-native
+  tag: "0.14.3"
+  # When signal-cli 0.14.3 was released. Clients expire roughly three months
+  # after release and the server then refuses them, so this feeds the alert
+  # that counts that down. Update it with the tag above.
+  releasedAt: "2026-04-22T00:00:00Z"
+  # The account this bridge runs as, in international format.
+  account: ""
+
+# signal-cli takes a file lock on its data directory and a second process
+# cannot start. Do not raise this.
+replicaCount: 1
+
+pairs: []
+# - id: acme-signal
+#   slack:
+#     channelId: C01ABCDEF
+#   signal:
+#     groupId: "Ci8KIExhbXBz"
+
+# Mentions only translate for people listed here: Signal exposes no directory
+# a Slack workspace could be matched against, and guessing would notify the
+# wrong person at a customer.
+users: []
+# - pairId: acme-signal
+#   slackUserId: U01ABCDEF
+#   signalUuid: 8f5ac0de-0000-4000-8000-000000000001
+#   displayName: Timur Tukaev
+
+# Name of a pre-created Secret holding SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET
+# and DATABASE_URL. Signal's credentials are not here: they live inside the
+# persistent volume, which is exactly why that volume is sensitive.
+existingSecret: signal-slack-bridge
+
+persistence:
+  # Holds the account's identity keys, sessions, groups and received files.
+  # Losing it means re-registering the number, which shows every participant
+  # a changed safety number — the warning that reads as a compromise.
+  size: 5Gi
+  storageClass: ""
+
+backup:
+  # Weekly consistent dump: scale to zero, archive, scale back. The downtime
+  # is free because signal-cli runs with --receive-mode=manual, so nothing is
+  # drained from the Signal server while the bridge is down.
+  enabled: false
+  schedule: "0 3 * * 0"
+  image: alpine:3.20
+  destination: ""
+  # Public age key. The archive is the account: anyone holding it can send as
+  # this number, so it is encrypted before it leaves the pod and the bucket
+  # never sees usable keys.
+  ageRecipient: ""
+  existingSecret: signal-bridge-backup
+
+ingress:
+  enabled: true
+  className: nginx
+  host: signal-bridge.example.com
+  tls:
+    enabled: true
+    secretName: signal-slack-bridge-tls
+
+resources:
+  bridge:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      # Attachments are held in memory: JSON-RPC carries a file as one base64
+      # string, so a 50 MB transfer is around 130 MB of live heap.
+      memory: 512Mi
+  signalCli:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      memory: 1Gi
+
+monitoring:
+  enabled: true
+  scrapeInterval: 30s
+  alerts:
+    enabled: true
+    # Warn a month before the client expires, escalate a fortnight before.
+    clientAgeWarningDays: 60
+    clientAgeCriticalDays: 75

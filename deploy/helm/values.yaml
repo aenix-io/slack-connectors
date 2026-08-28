@@ -1,0 +1,47 @@
+image:
+  repository: ghcr.io/aenix-io/slack-connectors/teams-slack
+  # Pin this to an immutable tag for anything but a throwaway install. CI
+  # publishes sha-<commit> alongside the moving tags, and an unpinned
+  # deployment cannot tell you what it actually ran.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+# The subscription renewal loop must be a singleton. Do not raise this
+# without adding leader election first.
+replicaCount: 1
+
+pairs: []
+# - id: acme-general
+#   teamsTeamId: 00000000-0000-0000-0000-000000000000
+#   teamsChannelId: "19:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx@thread.tacv2"
+#   slackChannelId: C01ABCDEF
+
+publicWebhookURL: ""
+
+# Name of a pre-created Secret holding: SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET,
+# AZURE_CLIENT_ID, AZURE_CLIENT_SECRET, AZURE_TENANT_ID, BOT_APP_ID,
+# BOT_APP_SECRET, DATABASE_URL, GRAPH_CLIENT_STATE, GRAPH_ENCRYPTION_CERT,
+# GRAPH_ENCRYPTION_CERT_ID, and a graph-encryption.pem key file.
+existingSecret: teams-slack-bridge
+
+ingress:
+  enabled: true
+  className: nginx
+  host: bridge.example.com
+  tls:
+    enabled: true
+    secretName: teams-slack-bridge-tls
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 64Mi
+  limits:
+    memory: 256Mi
+
+# /metrics is intentionally not exposed through the Ingress, so this scrape is
+# the only way the metrics are collected. With monitoring disabled, none of
+# them exist anywhere — including the subscription expiry the alerts rely on.
+monitoring:
+  enabled: true
+  scrapeInterval: 30s

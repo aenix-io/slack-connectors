@@ -1,0 +1,17 @@
+{{- if .Values.monitoring.enabled }}
+# VMServiceScrape, not ServiceMonitor: the platform runs VictoriaMetrics.
+# /metrics is deliberately not on the Ingress, so this is the only way the
+# metrics are collected at all — without it none of them exist.
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMServiceScrape
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  selector:
+    matchLabels:
+      app: {{ .Release.Name }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.monitoring.scrapeInterval }}
+{{- end }}

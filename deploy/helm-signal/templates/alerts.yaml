@@ -1,0 +1,84 @@
+{{- if and .Values.monitoring.enabled .Values.monitoring.alerts.enabled }}
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  groups:
+    - name: signal-slack-bridge
+      rules:
+        # Both of these are how the bridge goes deaf without erroring: the
+        # socket dies, or the subscription that makes signal-cli deliver is
+        # gone. Messages keep arriving at the Signal server and nothing here
+        # reads them.
+        - alert: SignalBridgeDisconnected
+          expr: bridge_signal_connected == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: The bridge has lost its connection to signal-cli
+            runbook: docs/onboarding/signal-account-setup.md
+
+        - alert: SignalBridgeNotSubscribed
+          expr: bridge_signal_subscription_active == 0
+          for: 2m
+          labels:
+            severity: critical
+          annotations:
+            summary: The bridge is connected but not receiving Signal messages
+
+        # Signal's anti-abuse system has decided this account looks like a
+        # spammer. Until somebody solves a CAPTCHA by hand and submits it,
+        # nothing more gets through — and the send that triggered it still
+        # reported a timestamp, so nothing else makes this visible.
+        - alert: SignalBridgeProofRequired
+          expr: increase(bridge_signal_proof_required_total[15m]) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: Signal is demanding a CAPTCHA before it will carry more traffic
+            runbook: docs/onboarding/signal-account-setup.md
+
+        # A signal-cli release expires about three months after it ships and
+        # the server then refuses it. This alert is independent of the
+        # workflow that bumps the image, because a scheduled workflow that
+        # quietly stops running looks exactly like one with nothing to do.
+        - alert: SignalCliApproachingExpiry
+          expr: >-
+            (time() - bridge_signal_client_release_timestamp_seconds)
+            > {{ mul .Values.monitoring.alerts.clientAgeWarningDays 86400 }}
+          for: 1h
+          labels:
+            severity: warning
+          annotations:
+            summary: The signal-cli in the sidecar is old enough to be worth updating
+
+        - alert: SignalCliNearlyExpired
+          expr: >-
+            (time() - bridge_signal_client_release_timestamp_seconds)
+            > {{ mul .Values.monitoring.alerts.clientAgeCriticalDays 86400 }}
+          for: 1h
+          labels:
+            severity: critical
+          annotations:
+            summary: The signal-cli in the sidecar expires within about a fortnight
+
+        # The one gap in the delivery guarantee: a message read from the
+        # socket but not delivered when the process stopped. signal-cli has
+        # already acknowledged it to the Signal server and nothing replays it.
+        - alert: SignalBridgeLostMessages
+          expr: increase(bridge_signal_inflight_lost_total[1h]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: A message was received but not delivered before shutdown
+
+        - alert: SignalBridgeDeliveryFailures
+          expr: increase(bridge_failed_total[15m]) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Messages are failing to reach the far side
+{{- end }}

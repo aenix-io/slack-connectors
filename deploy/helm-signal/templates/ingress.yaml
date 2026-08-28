@@ -1,0 +1,28 @@
+{{- if .Values.ingress.enabled }}
+# Only the Slack webhook is exposed. The JSON-RPC socket is not reachable from
+# the pod network at all, let alone from outside it: it is unauthenticated and
+# grants full control of the Signal account.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls.enabled }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: {{ .Values.ingress.tls.secretName }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /webhook/slack
+            pathType: Exact
+            backend:
+              service:
+                name: {{ .Release.Name }}
+                port:
+                  name: http
+{{- end }}

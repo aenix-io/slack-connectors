@@ -1,0 +1,71 @@
+{{- if .Values.monitoring.enabled }}
+apiVersion: operator.victoriametrics.com/v1beta1
+kind: VMRule
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  groups:
+    - name: teams-slack-bridge
+      rules:
+        # The most important alert in the file. When no subscription exists at
+        # all the expiry gauge is absent rather than stale, so a threshold
+        # comparison alone can never fire — which is how a bridge that failed
+        # to create a subscription at startup stayed silently deaf.
+        - alert: BridgeHasNoGraphSubscription
+          expr: absent(bridge_subscription_expires_seconds)
+          for: 10m
+          labels:
+            severity: critical
+          annotations:
+            summary: The bridge reports no Graph subscription for any pair
+            description: >-
+              Nothing is being received from Microsoft Teams. Either every
+              subscription failed to be created, or the service is not being
+              scraped at all. Check the pod's readiness and its logs.
+
+        - alert: BridgeSubscriptionExpiringSoon
+          expr: bridge_subscription_expires_seconds - time() < 600
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: Graph subscription for pair {{ "{{ $labels.pair }}" }} is about to lapse
+            description: >-
+              Renewal is not keeping up. When the subscription lapses the
+              bridge stops receiving Teams messages, and the only symptom is
+              that nothing arrives.
+
+        - alert: BridgeSubscriptionRenewalFailing
+          expr: increase(bridge_subscription_renewal_failures_total[15m]) > 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Graph subscription renewal is failing for pair {{ "{{ $labels.pair }}" }}
+            description: >-
+              A failed renewal leads to the subscription being recreated. If
+              this persists, recreation is failing too.
+
+        - alert: BridgeDeliveryFailing
+          expr: increase(bridge_failed_total[10m]) > 0
+          for: 10m
+          labels:
+            severity: warning
+          annotations:
+            summary: Messages are failing to reach {{ "{{ $labels.target }}" }} for pair {{ "{{ $labels.pair }}" }}
+            description: >-
+              A failure whose outcome was unknown keeps its claim and is not
+              retried, so these messages may never arrive. Read the pod logs
+              for the specific reason.
+
+        - alert: BridgeDown
+          expr: up{job=~".*{{ .Release.Name }}.*"} == 0
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: The bridge is not being scraped
+            description: >-
+              Either the pod is not running or metrics collection is broken. In
+              both cases no other alert in this group can be trusted.
+{{- end }}

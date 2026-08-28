@@ -1,0 +1,9 @@
+.superpowers/
+/bridge
+*.pem
+*.key
+.env
+
+# Rendered app packages carry real ids; the template is the source.
+deploy/teams-app/build/
+deploy/teams-app/*.zip
