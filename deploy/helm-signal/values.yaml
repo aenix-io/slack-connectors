@@ -2,7 +2,7 @@ image:
   repository: ghcr.io/aenix-io/slack-connectors/signal-slack
   # Pin this to an immutable tag for anything but a throwaway install. An
   # unpinned deployment cannot tell you what it actually ran.
-  tag: ""
+  tag: "0.14.8"
   pullPolicy: IfNotPresent
 
 signalCli:
@@ -13,7 +13,7 @@ signalCli:
   # When signal-cli 0.14.3 was released. Clients expire roughly three months
   # after release and the server then refuses them, so this feeds the alert
   # that counts that down. Update it with the tag above.
-  releasedAt: "2026-04-22T00:00:00Z"
+  releasedAt: "2026-09-10T18:12:37Z"
   # The account this bridge runs as, in international format.
   account: ""
 
